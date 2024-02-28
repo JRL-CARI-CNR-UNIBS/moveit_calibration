@@ -71,7 +71,7 @@ private:
   int markers_y_;                                        // Number of markers along Y axis
   int marker_size_;                                      // Marker size in pixels
   int separation_;                                       // Marker separation distance in pixels
-  int border_bits_;                                      // Margin of boarder in bits
+  int border_bits_;                                      // Border margin in bits
   cv::aruco::PREDEFINED_DICTIONARY_NAME dictionary_id_;  // Marker dictionary id
 
   // Target real dimensions in meters

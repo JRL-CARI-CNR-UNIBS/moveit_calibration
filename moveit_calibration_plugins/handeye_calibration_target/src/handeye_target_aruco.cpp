@@ -46,7 +46,11 @@ const std::map<std::string, cv::aruco::PREDEFINED_DICTIONARY_NAME> ARUCO_DICTION
   { "DICT_5X5_250", cv::aruco::DICT_5X5_250 },
   { "DICT_6X6_250", cv::aruco::DICT_6X6_250 },
   { "DICT_7X7_250", cv::aruco::DICT_7X7_250 },
-  { "DICT_ARUCO_ORIGINAL", cv::aruco::DICT_ARUCO_ORIGINAL }
+  { "DICT_ARUCO_ORIGINAL", cv::aruco::DICT_ARUCO_ORIGINAL },
+  { "DICT_APRILTAG_16h5", cv::aruco::DICT_APRILTAG_16h5 },
+  { "DICT_APRILTAG_25h9", cv::aruco::DICT_APRILTAG_25h9 },
+  { "DICT_APRILTAG_36h10", cv::aruco::DICT_APRILTAG_36h10 },
+  { "DICT_APRILTAG_36h11", cv::aruco::DICT_APRILTAG_36h11 }
 };
 
 HandEyeArucoTarget::HandEyeArucoTarget()
@@ -129,7 +133,7 @@ bool HandEyeArucoTarget::setTargetDimension(double marker_measured_size, double 
                              marker_measured_size, marker_measured_separation);
     return false;
   }
-
+  
   std::lock_guard<std::mutex> aruco_lock(aruco_mutex_);
   marker_size_real_ = marker_measured_size;
   marker_separation_real_ = marker_measured_separation;
@@ -171,13 +175,11 @@ bool HandEyeArucoTarget::detectTargetPose(cv::Mat& image)
   std::lock_guard<std::mutex> base_lock(base_mutex_);
   try
   {
-    // Detect aruco board
     aruco_mutex_.lock();
     cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(dictionary_id_);
-    cv::Ptr<cv::aruco::GridBoard> board =
-        cv::aruco::GridBoard::create(markers_x_, markers_y_, marker_size_real_, marker_separation_real_, dictionary);
     aruco_mutex_.unlock();
     cv::Ptr<cv::aruco::DetectorParameters> params_ptr(new cv::aruco::DetectorParameters());
+
 #if CV_MAJOR_VERSION == 3 && CV_MINOR_VERSION == 2
     params_ptr->doCornerRefinement = true;
 #else
@@ -186,29 +188,90 @@ bool HandEyeArucoTarget::detectTargetPose(cv::Mat& image)
 
     std::vector<int> marker_ids;
     std::vector<std::vector<cv::Point2f>> marker_corners;
+
     cv::aruco::detectMarkers(image, dictionary, marker_corners, marker_ids, params_ptr);
     if (marker_ids.empty())
     {
-      ROS_DEBUG_STREAM_THROTTLE_NAMED(1., LOGNAME, "No aruco marker detected.");
+      ROS_WARN_STREAM_THROTTLE_NAMED(1., LOGNAME, "No aruco marker detected.");
       return false;
     }
 
-    // Refine markers borders
-    std::vector<std::vector<cv::Point2f>> rejected_corners;
-    cv::aruco::refineDetectedMarkers(image, board, marker_corners, marker_ids, rejected_corners, camera_matrix_,
-                                     distortion_coeffs_);
+    // Multiple markers
+    if (markers_x_ != 1 || markers_y_ != 1)
+    {
+      try
+      {
+        // Create aruco board object
+        aruco_mutex_.lock();
+        cv::Ptr<cv::aruco::GridBoard> board =
+          cv::aruco::GridBoard::create(markers_x_, markers_y_, marker_size_real_, marker_separation_real_, dictionary);
+        aruco_mutex_.unlock();
 
-    // Estimate aruco board pose
-    int valid = cv::aruco::estimatePoseBoard(marker_corners, marker_ids, board, camera_matrix_, distortion_coeffs_,
-                                             rotation_vect_, translation_vect_);
+        // Refine markers borders
+        std::vector<std::vector<cv::Point2f>> rejected_corners;
+        cv::aruco::refineDetectedMarkers(image, board, marker_corners, marker_ids, rejected_corners, camera_matrix_,
+                                        distortion_coeffs_);
 
-    // Draw the markers and frame axis if at least one marker is detected
-    if (valid == 0)
+        // Estimate aruco board pose
+        // int valid = cv::aruco::estimatePoseBoard(marker_corners, marker_ids, board, camera_matrix_,
+        //                                          distortion_coeffs_, rotation_vect_, translation_vect_);
+        // if (valid == 0)
+        // {
+        //   ROS_WARN_STREAM_THROTTLE_NAMED(1., LOGNAME, "Cannot estimate aruco board pose.");
+        //   return false;
+        // }
+
+        // === Estimate aruco board pose: ALTERNATIVE METHOD ===
+        std::vector<cv::Point2f> marker_corners_img;
+        std::vector<cv::Point3f> marker_corners_obj;
+
+        // Align detected marker corners with board corners
+        cv::aruco::getBoardObjectAndImagePoints(board, marker_corners, marker_ids,
+                                                marker_corners_obj, marker_corners_img);
+
+        // Estimate aruco board pose
+        cv::solvePnP(marker_corners_obj, marker_corners_img, camera_matrix_,
+                     distortion_coeffs_, rotation_vect_, translation_vect_);
+        // =====================================================
+      }
+      catch (const cv::Exception& e)
+      {
+        ROS_ERROR_STREAM_THROTTLE_NAMED(1., LOGNAME, "Multiple-marker board pose esimation failed: " << e.what());
+        return false;
+      } 
+    }
+    else // Single marker
+    {
+      try
+      {
+        std::vector<cv::Point2f> marker_corners_img = marker_corners.at(0); // cast from std::vector<std::vector<cv::Point2f>> to std::vector<cv::Point2f>
+        
+        // Define marker corners in object (i.e., real calibration master) coordinate
+        std::vector<cv::Point3f> marker_corners_obj;
+        marker_corners_obj.push_back(cv::Point3f(0.0, 0.0, 0.0));
+        marker_corners_obj.push_back(cv::Point3f(marker_size_real_, 0.0, 0.0));
+        marker_corners_obj.push_back(cv::Point3f(marker_size_real_, marker_size_real_, 0.0));
+        marker_corners_obj.push_back(cv::Point3f(0.0, marker_size_real_, 0.0));
+
+        // Estimate aruco marker pose
+        cv::solvePnP(marker_corners_obj, marker_corners_img, camera_matrix_,
+                     distortion_coeffs_, rotation_vect_, translation_vect_);
+        // cv::aruco::estimatePoseSingleMarkers(marker_corners, (float)marker_size_real_, camera_matrix_, // DEPRECATED
+        //                                      distortion_coeffs_, rotation_vect_, translation_vect_);
+      }
+      catch (const cv::Exception& e)
+      {
+        ROS_ERROR_STREAM_THROTTLE_NAMED(1., LOGNAME, "Single-marker pose esimation failed: " << e.what());
+        return false;
+      }
+    }
+
+    if (rotation_vect_ == cv::Vec3d(0, 0, 0) || translation_vect_ == cv::Vec3d(0, 0, 0))
     {
       ROS_WARN_STREAM_THROTTLE_NAMED(1., LOGNAME, "Cannot estimate aruco board pose.");
       return false;
     }
-
+    
     if (std::log10(std::fabs(rotation_vect_[0])) > 10 || std::log10(std::fabs(rotation_vect_[1])) > 10 ||
         std::log10(std::fabs(rotation_vect_[2])) > 10 || std::log10(std::fabs(translation_vect_[0])) > 10 ||
         std::log10(std::fabs(translation_vect_[1])) > 10 || std::log10(std::fabs(translation_vect_[2])) > 10)
@@ -217,6 +280,7 @@ bool HandEyeArucoTarget::detectTargetPose(cv::Mat& image)
       return false;
     }
 
+    // Draw detected markers and axis
     cv::Mat image_rgb;
     cv::cvtColor(image, image_rgb, cv::COLOR_GRAY2RGB);
     cv::aruco::drawDetectedMarkers(image_rgb, marker_corners);

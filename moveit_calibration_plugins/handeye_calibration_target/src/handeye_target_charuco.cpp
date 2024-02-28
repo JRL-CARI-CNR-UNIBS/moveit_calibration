@@ -46,7 +46,11 @@ const std::map<std::string, cv::aruco::PREDEFINED_DICTIONARY_NAME> ARUCO_DICTION
   { "DICT_5X5_250", cv::aruco::DICT_5X5_250 },
   { "DICT_6X6_250", cv::aruco::DICT_6X6_250 },
   { "DICT_7X7_250", cv::aruco::DICT_7X7_250 },
-  { "DICT_ARUCO_ORIGINAL", cv::aruco::DICT_ARUCO_ORIGINAL }
+  { "DICT_ARUCO_ORIGINAL", cv::aruco::DICT_ARUCO_ORIGINAL },
+  { "DICT_APRILTAG_16h5", cv::aruco::DICT_APRILTAG_16h5 },
+  { "DICT_APRILTAG_25h9", cv::aruco::DICT_APRILTAG_25h9 },
+  { "DICT_APRILTAG_36h10", cv::aruco::DICT_APRILTAG_36h10 },
+  { "DICT_APRILTAG_36h11", cv::aruco::DICT_APRILTAG_36h11 }
 };
 
 HandEyeCharucoTarget::HandEyeCharucoTarget()
